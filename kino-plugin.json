@@ -13,11 +13,17 @@
   "color": "#7C3AED",
   "settings": [
     {
+      "key": "tmdbSection",
+      "label": "TMDB API Key",
+      "type": "section",
+      "hint": "Necesitas una clave gratuita de The Movie Database. Regístrate en themoviedb.org/signup, luego ve a Configuración → API y copia la «Clave de la API (v3 auth)»."
+    },
+    {
       "key": "tmdbKey",
-      "label": "TMDB API Key (v3)",
+      "label": "Clave de la API (v3 auth)",
       "type": "password",
       "required": true,
-      "hint": "themoviedb.org → Cuenta → Configuración → API"
+      "hint": "32 caracteres hexadecimales"
     }
   ]
 }
