@@ -1,0 +1,23 @@
+{
+  "id": "eclipsia",
+  "name": "Eclipsia",
+  "version": "0.1.0",
+  "apiVersion": 6,
+  "entry": "plugin.js",
+  "description": "Catálogo TMDB con streams Vidlink — películas y series hasta 4K",
+  "author": "xuper-plugin",
+  "hosts": ["api.themoviedb.org", "vidlink.pro", "enc-dec.app"],
+  "streamHosts": "any",
+  "capabilities": ["search", "home", "browse", "episodes", "resolve"],
+  "categories": ["movies", "series"],
+  "color": "#7C3AED",
+  "settings": [
+    {
+      "key": "tmdbKey",
+      "label": "TMDB API Key (v3)",
+      "type": "password",
+      "required": true,
+      "hint": "themoviedb.org → Cuenta → Configuración → API"
+    }
+  ]
+}
