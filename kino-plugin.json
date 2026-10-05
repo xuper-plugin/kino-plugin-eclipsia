@@ -22,8 +22,7 @@
       "key": "tmdbKey",
       "label": "Clave de la API (v3 auth)",
       "type": "password",
-      "required": true,
-      "hint": "32 caracteres hexadecimales"
+      "hint": "32 caracteres hexadecimales — opcional, pero sin ella no hay catálogo"
     }
   ]
 }

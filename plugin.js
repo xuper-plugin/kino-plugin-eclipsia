@@ -11,11 +11,13 @@ const VL_HEADERS = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function apiKey() { return kino.config.get("tmdbKey"); }
+function apiKey() { return kino.config.get("tmdbKey") || null; }
 
 async function tmdb(path) {
+  const k = apiKey();
+  if (!k) return null;
   const sep = path.includes("?") ? "&" : "?";
-  const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${apiKey()}`);
+  const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`);
   if (!r.ok) throw new Error("TMDB " + r.status);
   return r.json();
 }
@@ -50,7 +52,7 @@ function qualRank(q) {
 // ── Search ───────────────────────────────────────────────────────────────────
 
 export async function search({ q, type, cursor }) {
-  if (!q) return { items: [] };
+  if (!q || !apiKey()) return { items: [] };
   const page = cursor ? Number(cursor) : 1;
   const mt   = type === "movie" ? "movie" : type === "series" ? "tv" : "multi";
   const data = await tmdb(`/search/${mt}?query=${encodeURIComponent(q)}&page=${page}&include_adult=false`);
@@ -66,6 +68,7 @@ export async function search({ q, type, cursor }) {
 // ── Home ─────────────────────────────────────────────────────────────────────
 
 export async function home() {
+  if (!apiKey()) return [];
   const [trendM, trendS, popM, popS, topM, topS] = await Promise.all([
     tmdb("/trending/movie/week"),
     tmdb("/trending/tv/week"),
@@ -102,6 +105,7 @@ const BROWSE_ENDPOINT = {
 };
 
 export async function browse(ref, cursor) {
+  if (!apiKey()) return { items: [] };
   const page = cursor ? Number(cursor) : 2;
   const ep   = BROWSE_ENDPOINT[ref];
   if (!ep) return { items: [] };
@@ -115,6 +119,7 @@ export async function browse(ref, cursor) {
 // ── Episodes ──────────────────────────────────────────────────────────────────
 
 export async function episodes(ref) {
+  if (!apiKey()) return { episodes: [] };
   const parts  = ref.split(":");
   const tmdbId = parts[1];
   const wantSeason = parts[2] ? Number(parts[2]) : null;
