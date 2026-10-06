@@ -1,7 +1,7 @@
 {
   "id": "eclipsia",
   "name": "Eclipsia",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Catálogo TMDB con streams Vidlink — películas y series hasta 4K",
@@ -16,13 +16,13 @@
       "key": "tmdbSection",
       "label": "TMDB API Key",
       "type": "section",
-      "hint": "Necesitas una clave gratuita de The Movie Database. Regístrate en themoviedb.org/signup, luego ve a Configuración → API y copia la «Clave de la API (v3 auth)»."
+      "hint": "Para ver el catálogo necesitas una llave de TMDB. Ponla aquí, o en Ajustes ▸ «Tu llave de TMDB» (Kino 0.9.53 o más nueva), o instala un addon de TMDB de Stremio configurado con tu llave. Es gratis: regístrate en themoviedb.org/signup y en Configuración → API copia la «Clave de la API (v3 auth)»."
     },
     {
       "key": "tmdbKey",
       "label": "Clave de la API (v3 auth)",
       "type": "password",
-      "hint": "32 caracteres hexadecimales — opcional, pero sin ella no hay catálogo"
+      "hint": "Opcional si ya la tienes en Ajustes o en un addon de TMDB de Stremio."
     }
   ]
 }

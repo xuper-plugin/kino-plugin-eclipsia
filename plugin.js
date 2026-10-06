@@ -13,14 +13,52 @@ const VL_HEADERS = {
 
 function apiKey() { return kino.config.get("tmdbKey") || null; }
 
+// Kino 0.9.53+ answers TMDB with the person's own key (theirs in Ajustes, or their Stremio TMDB addon's).
+const hasKinoTmdb = () => typeof kino.tmdb === "function";
+
+// What the person reads when no key is available anywhere.
+const NO_KEY_MESSAGE =
+  "Necesitas una llave de TMDB: ponla en este plugin o en Ajustes ▸ «Tu llave de TMDB», o instala un addon de TMDB de Stremio con tu llave.";
+
+function noKey() {
+  return kino.error("unavailable", "no TMDB key", { userMessage: NO_KEY_MESSAGE });
+}
+
+// A path with its query string ("/search/movie?query=x&page=2") as kino.tmdb's path + params.
+function splitQuery(path) {
+  const i = path.indexOf("?");
+  if (i < 0) return { path, params: {} };
+  const params = {};
+  for (const pair of path.slice(i + 1).split("&")) {
+    if (!pair) continue;
+    const eq = pair.indexOf("=");
+    const k = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+    params[k] = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1));
+  }
+  return { path: path.slice(0, i), params };
+}
+
+// The plugin's own key wins (the person set it here); otherwise Kino's kino.tmdb; otherwise noKey().
 async function tmdb(path) {
   const k = apiKey();
-  if (!k) return null;
-  const sep = path.includes("?") ? "&" : "?";
-  const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`);
-  if (!r.ok) throw new Error("TMDB " + r.status);
-  return r.json();
+  if (k) {
+    const sep = path.includes("?") ? "&" : "?";
+    const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`);
+    if (!r.ok) throw new Error("TMDB " + r.status);
+    return r.json();
+  }
+  if (!hasKinoTmdb()) throw noKey();
+  const q = splitQuery(path);
+  try {
+    return await kino.tmdb(q.path, q.params);
+  } catch (e) {
+    if (e && e.code === "no_tmdb_key") throw noKey();
+    throw e;
+  }
 }
+
+/** True when some TMDB key can answer: this plugin's own, or Kino's kino.tmdb (which tells the person if it has none). */
+const canTmdb = () => !!apiKey() || hasKinoTmdb();
 
 function toItem(m) {
   const isTv = m.media_type === "tv" || (!m.media_type && !!m.first_air_date);
@@ -52,7 +90,7 @@ function qualRank(q) {
 // ── Search ───────────────────────────────────────────────────────────────────
 
 export async function search({ q, type, cursor }) {
-  if (!q || !apiKey()) return { items: [] };
+  if (!q || !canTmdb()) return { items: [] };
   const page = cursor ? Number(cursor) : 1;
   const mt   = type === "movie" ? "movie" : type === "series" ? "tv" : "multi";
   const data = await tmdb(`/search/${mt}?query=${encodeURIComponent(q)}&page=${page}&include_adult=false`);
@@ -68,7 +106,7 @@ export async function search({ q, type, cursor }) {
 // ── Home ─────────────────────────────────────────────────────────────────────
 
 export async function home() {
-  if (!apiKey()) return [];
+  if (!canTmdb()) throw noKey();
   const [trendM, trendS, popM, popS, topM, topS] = await Promise.all([
     tmdb("/trending/movie/week"),
     tmdb("/trending/tv/week"),
@@ -105,7 +143,7 @@ const BROWSE_ENDPOINT = {
 };
 
 export async function browse(ref, cursor) {
-  if (!apiKey()) return { items: [] };
+  if (!canTmdb()) return { items: [] };
   const page = cursor ? Number(cursor) : 2;
   const ep   = BROWSE_ENDPOINT[ref];
   if (!ep) return { items: [] };
@@ -119,7 +157,7 @@ export async function browse(ref, cursor) {
 // ── Episodes ──────────────────────────────────────────────────────────────────
 
 export async function episodes(ref) {
-  if (!apiKey()) return { episodes: [] };
+  if (!canTmdb()) return { episodes: [] };
   const parts  = ref.split(":");
   const tmdbId = parts[1];
   const wantSeason = parts[2] ? Number(parts[2]) : null;
