@@ -38,13 +38,23 @@ function splitQuery(path) {
   return { path: path.slice(0, i), params };
 }
 
+// A plain Error reaches the error board as "thrown" with nothing to read; a kino.error keeps a class and the person gets a sentence.
+function tmdbStatusError(status) {
+  if (status === 401 || status === 403) return kino.error("unavailable", "TMDB " + status, { userMessage: "La llave de TMDB no es válida. Revísala en este plugin o en Ajustes ▸ «Tu llave de TMDB»." });
+  if (status === 429) return kino.error("rate_limited", "TMDB " + status, { userMessage: "TMDB recibió demasiadas peticiones. Espera un momento e inténtalo de nuevo." });
+  return kino.error("unavailable", "TMDB " + status, { userMessage: "TMDB no responde ahora. Inténtalo de nuevo en un rato." });
+}
+
+// kino.fetch waits 15 s by default and Home has about 20: one slow answer used to take the whole call.
+const TMDB_MS = 8000;
+
 // The plugin's own key wins (the person set it here); otherwise Kino's kino.tmdb; otherwise noKey().
 async function tmdb(path) {
   const k = apiKey();
   if (k) {
     const sep = path.includes("?") ? "&" : "?";
-    const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`);
-    if (!r.ok) throw new Error("TMDB " + r.status);
+    const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`, { timeoutMs: TMDB_MS });
+    if (!r.ok) throw tmdbStatusError(r.status);
     return r.json();
   }
   if (!hasKinoTmdb()) throw noKey();
@@ -107,14 +117,19 @@ export async function search({ q, type, cursor }) {
 
 export async function home() {
   if (!canTmdb()) throw noKey();
-  const [trendM, trendS, popM, popS, topM, topS] = await Promise.all([
-    tmdb("/trending/movie/week"),
-    tmdb("/trending/tv/week"),
-    tmdb("/movie/popular"),
-    tmdb("/tv/popular"),
-    tmdb("/movie/top_rated"),
-    tmdb("/tv/top_rated"),
-  ]);
+  // Each list on its own: a slow or refused one leaves its row out instead of failing the whole Home; only when none answers is it an error.
+  const lists = await Promise.all([
+    "/trending/movie/week",
+    "/trending/tv/week",
+    "/movie/popular",
+    "/tv/popular",
+    "/movie/top_rated",
+    "/tv/top_rated",
+  ].map((path) => tmdb(path).then((value) => ({ value }), (error) => ({ error }))));
+  const failed = lists.filter((l) => l.error);
+  if (failed.length === lists.length) throw failed[0].error;
+  if (failed.length) kino.log("home: " + failed.length + " of " + lists.length + " lists failed: " + (failed[0].error && failed[0].error.code));
+  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || { results: [] });
   return [
     { id: "trend-m", title: "Tendencias · Películas", ref: "trend-m",
       genre: "peliculas", items: (trendM.results || []).map(toItem) },
