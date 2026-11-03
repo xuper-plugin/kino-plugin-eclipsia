@@ -670,13 +670,19 @@ function splitQuery(path) {
 var isSpanish = () => String(kino.lang || "").toLowerCase().startsWith("es");
 var T = (es, en) => isSpanish() ? es : en;
 var withLanguage = (path) => /[?&]language=/.test(path) ? path : path + (path.includes("?") ? "&" : "?") + "language=" + (isSpanish() ? "es-MX" : "en-US");
+function tmdbStatusError(status) {
+  if (status === 401 || status === 403) return kino.error("unavailable", "TMDB " + status, { userMessage: "La llave de TMDB no es v\xE1lida. Rev\xEDsala en este plugin o en Ajustes \u25B8 \xABTu llave de TMDB\xBB." });
+  if (status === 429) return kino.error("rate_limited", "TMDB " + status, { userMessage: "TMDB recibi\xF3 demasiadas peticiones. Espera un momento e int\xE9ntalo de nuevo." });
+  return kino.error("unavailable", "TMDB " + status, { userMessage: "TMDB no responde ahora. Int\xE9ntalo de nuevo en un rato." });
+}
+var TMDB_MS = 8e3;
 async function tmdb(rawPath) {
   const path = withLanguage(rawPath);
   const k = apiKey();
   if (k) {
     const sep = path.includes("?") ? "&" : "?";
-    const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`);
-    if (!r.ok) throw new Error("TMDB " + r.status);
+    const r = await kino.fetch(`${TMDB_BASE}${path}${sep}api_key=${k}`, { timeoutMs: TMDB_MS });
+    if (!r.ok) throw tmdbStatusError(r.status);
     return r.json();
   }
   if (!hasKinoTmdb()) throw noKey();
@@ -727,14 +733,18 @@ async function search({ q, type, cursor }) {
 }
 async function home() {
   if (!canTmdb()) throw noKey();
-  const [trendM, trendS, popM, popS, topM, topS] = await Promise.all([
-    tmdb("/trending/movie/week"),
-    tmdb("/trending/tv/week"),
-    tmdb("/movie/popular"),
-    tmdb("/tv/popular"),
-    tmdb("/movie/top_rated"),
-    tmdb("/tv/top_rated")
-  ]);
+  const lists = await Promise.all([
+    "/trending/movie/week",
+    "/trending/tv/week",
+    "/movie/popular",
+    "/tv/popular",
+    "/movie/top_rated",
+    "/tv/top_rated"
+  ].map((path) => tmdb(path).then((value) => ({ value }), (error) => ({ error }))));
+  const failed = lists.filter((l) => l.error);
+  if (failed.length === lists.length) throw failed[0].error;
+  if (failed.length) kino.log("home: " + failed.length + " of " + lists.length + " lists failed: " + (failed[0].error && failed[0].error.code));
+  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || { results: [] });
   return [
     {
       id: "trend-m",
