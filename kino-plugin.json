@@ -1,15 +1,28 @@
 {
   "id": "eclipsia",
   "name": "Eclipsia",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Catálogo TMDB con streams Vidlink — películas y series hasta 4K",
   "author": "xuper-plugin",
-  "hosts": ["api.themoviedb.org", "vidlink.pro", "enc-dec.app"],
+  "hosts": [
+    "api.themoviedb.org",
+    "vidlink.pro",
+    "enc-dec.app"
+  ],
   "streamHosts": "any",
-  "capabilities": ["search", "home", "browse", "episodes", "resolve"],
-  "categories": ["movies", "series"],
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve"
+  ],
+  "categories": [
+    "movies",
+    "series"
+  ],
   "color": "#7C3AED",
   "settings": [
     {
@@ -24,5 +37,43 @@
       "type": "password",
       "hint": "Opcional si ya la tienes en Ajustes o en un addon de TMDB de Stremio."
     }
-  ]
+  ],
+  "theme": {
+    "accent": "#7C3AED",
+    "onAccent": "#FFFFFF",
+    "background": "#0B0714",
+    "surface": "#150F24",
+    "highlight": "#C4B5FD"
+  },
+  "section": {
+    "label": "Eclipsia",
+    "labelEn": "Eclipsia"
+  },
+  "enhancements": {
+    "14": {
+      "capabilities": [
+        "screen"
+      ],
+      "screen": {
+        "label": "Eclipsia",
+        "labelEn": "Eclipsia",
+        "icon": "movie",
+        "menuOpens": "screen",
+        "opensFrom": [
+          "menu",
+          "settings"
+        ],
+        "settingsButton": {
+          "label": "Abrir Eclipsia",
+          "labelEn": "Open Eclipsia"
+        },
+        "settingsIn": "screen"
+      }
+    },
+    "19": {
+      "capabilities": [
+        "screen"
+      ]
+    }
+  }
 }
