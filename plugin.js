@@ -647,6 +647,7 @@ var VL_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
   "Referer": "https://vidlink.pro/"
 };
+var STREAM_HEADERS = { "Referer": "https://moviebox.ph/" };
 function apiKey() {
   return kino.config.get("tmdbKey") || null;
 }
@@ -932,7 +933,8 @@ async function resolveRef(ref) {
   return {
     url: best.url,
     label: best.quality !== "auto" ? best.quality : void 0,
-    alternatives: rest.map((s) => ({ url: s.url, label: s.quality }))
+    headers: STREAM_HEADERS,
+    alternatives: rest.map((s) => ({ url: s.url, label: s.quality, headers: STREAM_HEADERS }))
   };
 }
 async function resolve(ref) {

@@ -13,6 +13,8 @@ const VL_HEADERS = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// The MovieBox CDN answers 429 to any request without the Referer it expects; the player sends these with the stream.
+var STREAM_HEADERS = { "Referer": "https://moviebox.ph/" };
 function apiKey() { return kino.config.get("tmdbKey") || null; }
 
 // Kino 0.9.53+ answers TMDB with the person's own key (theirs in Ajustes, or their Stremio TMDB addon's).
@@ -335,7 +337,8 @@ async function resolveRef(ref) {
   return {
     url:          best.url,
     label:        best.quality !== "auto" ? best.quality : undefined,
-    alternatives: rest.map(s => ({ url: s.url, label: s.quality })),
+    headers:      STREAM_HEADERS,
+    alternatives: rest.map(s => ({ url: s.url, label: s.quality, headers: STREAM_HEADERS })),
   };
 }
 
