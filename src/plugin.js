@@ -1,5 +1,11 @@
 import { makeBrowse } from "./browse/index.js";
 
+// Kino waits for every request a call left running before it delivers the call's answer (quickjs-kt joins the pending async work), so a call that
+// answered early at its own deadline or guard was still held until the requests it no longer needed ended. Asking Kino to drop what a call leaves
+// running (the prelude reads this flag after every call; Kino 0.9.54 and later, an older one ignores it) lets the answer leave when it is ready.
+globalThis.__kinoDropPendingFetches = true;
+
+
 const TMDB_BASE  = "https://api.themoviedb.org/3";
 const IMG_W500   = "https://image.tmdb.org/t/p/w500";
 const IMG_W1280  = "https://image.tmdb.org/t/p/w1280";
@@ -194,9 +200,16 @@ function savedHome(maxAgeMs) {
   } catch (_) { return null; }
 }
 
-async function guardAfter(ms) {
-  for (let left = ms; left > 0; left -= 4500) await kino.sleep(Math.min(left, 4500));
-  return null;
+/**
+ * Waits for [work] at most [ms], in short sleeps; true when it settled in time. Kino's call waits for a `kino.sleep` still pending, so the old
+ * guard (sleeps of up to 4.5 s chained for the whole guard, never cancelled) held a Home that had already finished until the guard ended.
+ */
+async function settledWithin(ms, work) {
+  let done = false;
+  Promise.resolve(work).then(() => { done = true; }, () => { done = true; });
+  const end = Date.now() + ms;
+  while (!done && Date.now() < end) await kino.sleep(Math.min(250, Math.max(1, end - Date.now())));
+  return done;
 }
 
 async function buildHome() {
@@ -237,7 +250,7 @@ export async function home() {
   const fresh = buildHome();
   let rows;
   try {
-    rows = saved ? await Promise.race([fresh, guardAfter(HOME_GUARD_MS)]) : await fresh;
+    rows = saved ? ((await settledWithin(HOME_GUARD_MS, fresh)) ? await fresh : null) : await fresh;
   } catch (e) {
     if (saved) return saved;
     throw e;

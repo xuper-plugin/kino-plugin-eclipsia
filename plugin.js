@@ -647,6 +647,7 @@ function makeBrowse({ kino: kino2, loadTab, searchTitles }) {
 }
 
 // src/plugin.js
+globalThis.__kinoDropPendingFetches = true;
 var TMDB_BASE = "https://api.themoviedb.org/3";
 var IMG_W500 = "https://image.tmdb.org/t/p/w500";
 var IMG_W1280 = "https://image.tmdb.org/t/p/w1280";
@@ -809,9 +810,16 @@ function savedHome(maxAgeMs) {
     return null;
   }
 }
-async function guardAfter(ms) {
-  for (let left = ms; left > 0; left -= 4500) await kino.sleep(Math.min(left, 4500));
-  return null;
+async function settledWithin(ms, work) {
+  let done = false;
+  Promise.resolve(work).then(() => {
+    done = true;
+  }, () => {
+    done = true;
+  });
+  const end = Date.now() + ms;
+  while (!done && Date.now() < end) await kino.sleep(Math.min(250, Math.max(1, end - Date.now())));
+  return done;
 }
 async function buildHome() {
   const lists = await Promise.all([
@@ -876,7 +884,7 @@ async function home() {
   const fresh = buildHome();
   let rows;
   try {
-    rows = saved ? await Promise.race([fresh, guardAfter(HOME_GUARD_MS)]) : await fresh;
+    rows = saved ? await settledWithin(HOME_GUARD_MS, fresh) ? await fresh : null : await fresh;
   } catch (e) {
     if (saved) return saved;
     throw e;
