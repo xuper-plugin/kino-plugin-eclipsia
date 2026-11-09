@@ -377,7 +377,8 @@ function makeMetaCache({ kino: kino2, clock = { now: () => Date.now() } }) {
 // src/browse/index.js
 var TAB_KEY = "browseTab";
 var SNAP_PREFIX = "browse1:";
-var SNAP_TTL_MS = 12 * 3600 * 1e3;
+var SNAP_TTL_MS = 7 * 24 * 3600 * 1e3;
+var HOME_KEY = "home1";
 var SNAP_MAX = 20 * 1024;
 var RECENT_KEY = "recent1";
 var RECENT_MAX = 12;
@@ -449,6 +450,15 @@ function makeBrowse({ kino: kino2, loadTab, searchTitles }) {
       }
     }
   }
+  function homeSeed(tab) {
+    if (tab !== "inicio") return null;
+    try {
+      const o = JSON.parse(get(HOME_KEY) || "null");
+      return o && Array.isArray(o.rows) && o.rows.length ? tabOf({ rows: o.rows }) : null;
+    } catch (_) {
+      return null;
+    }
+  }
   const stored = () => {
     const t = get(TAB_KEY);
     return TAB_IDS.includes(t) ? t : null;
@@ -456,7 +466,7 @@ function makeBrowse({ kino: kino2, loadTab, searchTitles }) {
   const remember = (tab) => set(TAB_KEY, tab);
   function dataOf(tab) {
     if (memo.has(tab)) return memo.get(tab).data;
-    const snap = readSnap(tab);
+    const snap = readSnap(tab) || homeSeed(tab);
     if (snap) {
       memo.set(tab, { data: snap, whole: false });
       return snap;
@@ -732,8 +742,78 @@ async function search({ q, type, cursor }) {
     next: data.page < data.total_pages ? String(page + 1) : void 0
   };
 }
-async function home() {
-  if (!canTmdb()) throw noKey();
+var LIST_FRESH_MS = 6 * 3600 * 1e3;
+var LIST_STALE_MS = 24 * 3600 * 1e3;
+var LIST_KEPT_ITEMS = 12;
+var listMem = /* @__PURE__ */ new Map();
+var listKey = (path) => "tl1:" + (isSpanish() ? "es" : "en") + ":" + path;
+function readList(key) {
+  const m = listMem.get(key);
+  if (m) return m;
+  try {
+    const o = JSON.parse(kino.storage.get(key) || "null");
+    if (o && typeof o.at === "number" && Array.isArray(o.items)) {
+      listMem.set(key, o);
+      return o;
+    }
+  } catch (_) {
+  }
+  return null;
+}
+function writeList(key, entry) {
+  listMem.set(key, entry);
+  try {
+    const slim = { at: entry.at, items: entry.items.slice(0, LIST_KEPT_ITEMS).map((i) => i.overview ? { ...i, overview: i.overview.slice(0, 120) } : i) };
+    kino.storage.set(key, JSON.stringify(slim), { ttlMs: LIST_STALE_MS });
+  } catch (_) {
+  }
+}
+async function listItems(path) {
+  const key = listKey(path);
+  const kept = readList(key);
+  const age = kept ? Date.now() - kept.at : Infinity;
+  if (kept && age < LIST_FRESH_MS) return kept.items;
+  try {
+    const d = await tmdb(path);
+    const items = (d.results || []).map(toItem);
+    writeList(key, { at: Date.now(), items });
+    return items;
+  } catch (e) {
+    if (kept && age < LIST_STALE_MS) return kept.items;
+    throw e;
+  }
+}
+var HOME_KEY2 = "home1";
+var HOME_STALE_MS = 7 * 24 * 3600 * 1e3;
+var HOME_FRESH_MS = 6 * 3600 * 1e3;
+var HOME_CACHE_MAX = 60 * 1024;
+var HOME_GUARD_MS = 1e4;
+function saveHome(rows) {
+  try {
+    for (let per = 20; per >= 4; per -= 4) {
+      const text = JSON.stringify({ at: Date.now(), lang: isSpanish() ? "es" : "en", rows: rows.map((r) => ({ ...r, items: r.items.slice(0, per) })) });
+      if (text.length <= HOME_CACHE_MAX) {
+        kino.storage.set(HOME_KEY2, text, { ttlMs: HOME_STALE_MS });
+        return;
+      }
+    }
+  } catch (_) {
+  }
+}
+function savedHome(maxAgeMs) {
+  try {
+    const s = JSON.parse(kino.storage.get(HOME_KEY2) || "null");
+    const lang = isSpanish() ? "es" : "en";
+    return s && Array.isArray(s.rows) && s.rows.length && (s.lang || lang) === lang && Date.now() - s.at < maxAgeMs ? s.rows : null;
+  } catch (_) {
+    return null;
+  }
+}
+async function guardAfter(ms) {
+  for (let left = ms; left > 0; left -= 4500) await kino.sleep(Math.min(left, 4500));
+  return null;
+}
+async function buildHome() {
   const lists = await Promise.all([
     "/trending/movie/week",
     "/trending/tv/week",
@@ -741,52 +821,69 @@ async function home() {
     "/tv/popular",
     "/movie/top_rated",
     "/tv/top_rated"
-  ].map((path) => tmdb(path).then((value) => ({ value }), (error) => ({ error }))));
+  ].map((path) => listItems(path).then((value) => ({ value }), (error) => ({ error }))));
   const failed = lists.filter((l) => l.error);
   if (failed.length === lists.length) throw failed[0].error;
   if (failed.length) kino.log("home: " + failed.length + " of " + lists.length + " lists failed: " + (failed[0].error && failed[0].error.code));
-  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || { results: [] });
-  return [
+  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || []);
+  const rows = [
     {
       id: "trend-m",
       title: T("Tendencias \xB7 Pel\xEDculas", "Trending \xB7 Movies"),
       ref: "trend-m",
       genre: "peliculas",
-      items: (trendM.results || []).map(toItem)
+      items: trendM
     },
     {
       id: "trend-s",
       title: T("Tendencias \xB7 Series", "Trending \xB7 Series"),
       ref: "trend-s",
-      items: (trendS.results || []).map(toItem)
+      items: trendS
     },
     {
       id: "pop-m",
       title: T("Populares \xB7 Pel\xEDculas", "Popular \xB7 Movies"),
       ref: "pop-m",
       genre: "peliculas",
-      items: (popM.results || []).map(toItem)
+      items: popM
     },
     {
       id: "pop-s",
       title: T("Populares \xB7 Series", "Popular \xB7 Series"),
       ref: "pop-s",
-      items: (popS.results || []).map(toItem)
+      items: popS
     },
     {
       id: "top-m",
       title: T("Mejor valoradas \xB7 Pel\xEDculas", "Top rated \xB7 Movies"),
       ref: "top-m",
       genre: "peliculas",
-      items: (topM.results || []).map(toItem)
+      items: topM
     },
     {
       id: "top-s",
       title: T("Mejor valoradas \xB7 Series", "Top rated \xB7 Series"),
       ref: "top-s",
-      items: (topS.results || []).map(toItem)
+      items: topS
     }
   ].filter((r) => r.items.length > 0);
+  if (rows.length) saveHome(rows);
+  return rows;
+}
+async function home() {
+  if (!canTmdb()) throw noKey();
+  const saved = savedHome(HOME_STALE_MS);
+  const fresh = buildHome();
+  let rows;
+  try {
+    rows = saved ? await Promise.race([fresh, guardAfter(HOME_GUARD_MS)]) : await fresh;
+  } catch (e) {
+    if (saved) return saved;
+    throw e;
+  }
+  fresh.catch(() => {
+  });
+  return rows && rows.length ? rows : saved || rows || [];
 }
 var BROWSE_ENDPOINT = {
   "trend-m": "/trending/movie/week",
@@ -810,7 +907,7 @@ async function browse(ref, cursor) {
   };
 }
 async function tabPage(tab) {
-  const shelf = (id, title, path, genre) => tmdb(path).then((d) => ({ id, title, ref: id, genre, items: (d.results || []).map(toItem) })).catch((e) => {
+  const shelf = (id, title, path, genre) => listItems(path).then((items) => ({ id, title, ref: id, genre, items })).catch((e) => {
     if (e && e.code === "unavailable") throw e;
     kino.log("shelf " + id + " failed: " + (e && e.message));
     return null;
@@ -834,7 +931,8 @@ async function section({ tab }) {
   const tabs = [{ id: "inicio", label: T("Inicio", "Home") }, { id: "peliculas", label: T("Pel\xEDculas", "Movies") }, { id: "series", label: "Series" }];
   const chosen = tabs.some((x) => x.id === tab) ? tab : tabs[0].id;
   if (!canTmdb()) throw noKey();
-  const { rows } = await tabPage(chosen);
+  const kept = chosen === "inicio" ? savedHome(HOME_FRESH_MS) : null;
+  const { rows } = kept ? { rows: kept } : await tabPage(chosen);
   const answer = { tabs, tab: chosen, rows };
   const pick = rows.length ? rows[0].items.filter((x) => x.backdrop) : [];
   if (pick.length) {

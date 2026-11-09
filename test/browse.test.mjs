@@ -110,6 +110,17 @@ test("a tab loaded before paints at once on the next opening from its kept copy"
   assert.ok(types(r.tree).includes("titleRail") && !types(r.tree).includes("skeleton"));
 });
 
+test("the Inicio tab paints at once from the copy home() keeps (home1) when it has none of its own", async () => {
+  const kino = fakeKino();
+  kino.store.set("home1", JSON.stringify({ at: Date.now() - 3 * 24 * 3600 * 1000, rows: pageOf("inicio").rows }));
+  const h = harness({ kino });
+  await h.send("open");
+  const r = await h.render();
+  assert.deepEqual(r.dropped, []);
+  assert.equal(types(r.tree).filter((t) => t === "titleRail").length, 2); // the rails are drawn from the copy (the slider waits for metadata)
+  assert.ok(JSON.stringify(r.raw).includes("Estrenos inicio"));
+});
+
 test("a tab that cannot load says so with a retry; the retry loads it again", async () => {
   const failing = new Set(["inicio"]);
   const h = harness({ failing });

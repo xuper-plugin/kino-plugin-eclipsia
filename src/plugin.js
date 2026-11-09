@@ -122,10 +122,84 @@ export async function search({ q, type, cursor }) {
   };
 }
 
+// TMDB's first-page lists, shared by home(), section() and the browse screen. A list is fresh for LIST_FRESH_MS (no request), kept
+// up to LIST_STALE_MS (served when TMDB fails). Memory holds the full items; storage a slim copy (the 256 KB are shared).
+const LIST_FRESH_MS = 6 * 3600 * 1000;
+const LIST_STALE_MS = 24 * 3600 * 1000;
+const LIST_KEPT_ITEMS = 12;
+const listMem = new Map(); // key -> { at, items }
+
+const listKey = (path) => "tl1:" + (isSpanish() ? "es" : "en") + ":" + path;
+
+function readList(key) {
+  const m = listMem.get(key);
+  if (m) return m;
+  try {
+    const o = JSON.parse(kino.storage.get(key) || "null");
+    if (o && typeof o.at === "number" && Array.isArray(o.items)) { listMem.set(key, o); return o; }
+  } catch (_) { /* no copy */ }
+  return null;
+}
+
+function writeList(key, entry) {
+  listMem.set(key, entry);
+  try {
+    const slim = { at: entry.at, items: entry.items.slice(0, LIST_KEPT_ITEMS).map((i) => (i.overview ? { ...i, overview: i.overview.slice(0, 120) } : i)) };
+    kino.storage.set(key, JSON.stringify(slim), { ttlMs: LIST_STALE_MS });
+  } catch (_) { /* full storage: memory only */ }
+}
+
+/** The items of one TMDB list: the kept copy when fresh, else TMDB (the kept copy, if under a day old, when TMDB fails). */
+async function listItems(path) {
+  const key = listKey(path);
+  const kept = readList(key);
+  const age = kept ? Date.now() - kept.at : Infinity;
+  if (kept && age < LIST_FRESH_MS) return kept.items;
+  try {
+    const d = await tmdb(path);
+    const items = (d.results || []).map(toItem);
+    writeList(key, { at: Date.now(), items });
+    return items;
+  } catch (e) {
+    if (kept && age < LIST_STALE_MS) return kept.items;
+    throw e;
+  }
+}
+
 // ── Home ─────────────────────────────────────────────────────────────────────
 
-export async function home() {
-  if (!canTmdb()) throw noKey();
+// The last good Home, kept (rows only, trimmed to HOME_CACHE_MAX) so a Home whose lists all fail shows something, and so the browse
+// screen's "inicio" tab paints from it (browse/index.js reads the same key).
+const HOME_KEY = "home1";
+const HOME_STALE_MS = 7 * 24 * 3600 * 1000;
+const HOME_FRESH_MS = 6 * 3600 * 1000;
+const HOME_CACHE_MAX = 60 * 1024;
+const HOME_GUARD_MS = 10000;
+
+function saveHome(rows) {
+  try {
+    for (let per = 20; per >= 4; per -= 4) {
+      const text = JSON.stringify({ at: Date.now(), lang: isSpanish() ? "es" : "en", rows: rows.map((r) => ({ ...r, items: r.items.slice(0, per) })) });
+      if (text.length <= HOME_CACHE_MAX) { kino.storage.set(HOME_KEY, text, { ttlMs: HOME_STALE_MS }); return; }
+    }
+  } catch (_) { /* full storage: no copy */ }
+}
+
+/** The kept Home rows no older than [maxAgeMs], in the person's language, else null. */
+function savedHome(maxAgeMs) {
+  try {
+    const s = JSON.parse(kino.storage.get(HOME_KEY) || "null");
+    const lang = isSpanish() ? "es" : "en";
+    return s && Array.isArray(s.rows) && s.rows.length && (s.lang || lang) === lang && Date.now() - s.at < maxAgeMs ? s.rows : null;
+  } catch (_) { return null; }
+}
+
+async function guardAfter(ms) {
+  for (let left = ms; left > 0; left -= 4500) await kino.sleep(Math.min(left, 4500));
+  return null;
+}
+
+async function buildHome() {
   // Each list on its own: a slow or refused one leaves its row out instead of failing the whole Home; only when none answers is it an error.
   const lists = await Promise.all([
     "/trending/movie/week",
@@ -134,25 +208,42 @@ export async function home() {
     "/tv/popular",
     "/movie/top_rated",
     "/tv/top_rated",
-  ].map((path) => tmdb(path).then((value) => ({ value }), (error) => ({ error }))));
+  ].map((path) => listItems(path).then((value) => ({ value }), (error) => ({ error }))));
   const failed = lists.filter((l) => l.error);
   if (failed.length === lists.length) throw failed[0].error;
   if (failed.length) kino.log("home: " + failed.length + " of " + lists.length + " lists failed: " + (failed[0].error && failed[0].error.code));
-  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || { results: [] });
-  return [
+  const [trendM, trendS, popM, popS, topM, topS] = lists.map((l) => l.value || []);
+  const rows = [
     { id: "trend-m", title: T("Tendencias · Películas", "Trending · Movies"), ref: "trend-m",
-      genre: "peliculas", items: (trendM.results || []).map(toItem) },
+      genre: "peliculas", items: trendM },
     { id: "trend-s", title: T("Tendencias · Series", "Trending · Series"),    ref: "trend-s",
-      items: (trendS.results || []).map(toItem) },
+      items: trendS },
     { id: "pop-m",   title: T("Populares · Películas", "Popular · Movies"),  ref: "pop-m",
-      genre: "peliculas", items: (popM.results || []).map(toItem) },
+      genre: "peliculas", items: popM },
     { id: "pop-s",   title: T("Populares · Series", "Popular · Series"),     ref: "pop-s",
-      items: (popS.results || []).map(toItem) },
+      items: popS },
     { id: "top-m",   title: T("Mejor valoradas · Películas", "Top rated · Movies"), ref: "top-m",
-      genre: "peliculas", items: (topM.results || []).map(toItem) },
+      genre: "peliculas", items: topM },
     { id: "top-s",   title: T("Mejor valoradas · Series", "Top rated · Series"),    ref: "top-s",
-      items: (topS.results || []).map(toItem) },
+      items: topS },
   ].filter(r => r.items.length > 0);
+  if (rows.length) saveHome(rows);
+  return rows;
+}
+
+export async function home() {
+  if (!canTmdb()) throw noKey();
+  const saved = savedHome(HOME_STALE_MS);
+  const fresh = buildHome();
+  let rows;
+  try {
+    rows = saved ? await Promise.race([fresh, guardAfter(HOME_GUARD_MS)]) : await fresh;
+  } catch (e) {
+    if (saved) return saved;
+    throw e;
+  }
+  fresh.catch(() => {});
+  return rows && rows.length ? rows : saved || rows || [];
 }
 
 // ── Browse ────────────────────────────────────────────────────────────────────
@@ -184,7 +275,7 @@ export async function browse(ref, cursor) {
 
 // One tab of the browse screen as a section page: Inicio is the six home rows, Películas and Series their own shelves.
 async function tabPage(tab) {
-  const shelf = (id, title, path, genre) => tmdb(path).then((d) => ({ id, title, ref: id, genre, items: (d.results || []).map(toItem) })).catch((e) => {
+  const shelf = (id, title, path, genre) => listItems(path).then((items) => ({ id, title, ref: id, genre, items })).catch((e) => {
     if (e && e.code === "unavailable") throw e;
     kino.log("shelf " + id + " failed: " + (e && e.message));
     return null;
@@ -204,7 +295,9 @@ export async function section({ tab }) {
   const tabs = [{ id: "inicio", label: T("Inicio", "Home") }, { id: "peliculas", label: T("Películas", "Movies") }, { id: "series", label: "Series" }];
   const chosen = tabs.some((x) => x.id === tab) ? tab : tabs[0].id;
   if (!canTmdb()) throw noKey();
-  const { rows } = await tabPage(chosen);
+  // Inicio is the Home rows: when home() kept them lately they are reused instead of asking TMDB for the six lists again.
+  const kept = chosen === "inicio" ? savedHome(HOME_FRESH_MS) : null;
+  const { rows } = kept ? { rows: kept } : await tabPage(chosen);
   const answer = { tabs, tab: chosen, rows };
   const pick = rows.length ? rows[0].items.filter((x) => x.backdrop) : [];
   if (pick.length) {
