@@ -21,6 +21,23 @@ const VL_HEADERS = {
 
 // The MovieBox CDN answers 429 to any request without the Referer it expects; the player sends these with the stream.
 var STREAM_HEADERS = { "Referer": "https://moviebox.ph/" };
+
+// A quality flagged `requiresProxy` cannot be fetched from the CDN directly (the CDN answers 429/428):
+// vidlink's own web player rewrites it to its media proxy, which fetches the CDN server-side. We do the
+// same — same base, same query layout (original params + the stream headers + the CDN host) — and send
+// the proxy its own Referer. Mirrors `vidlink.pro` chunk 3922's proxy builder.
+const PROXY_BASE    = "https://surge.flooderrr.store";
+const PROXY_HEADERS = { "Referer": "https://vidlink.pro/" };
+function proxify(rawUrl, headers) {
+  try {
+    const u = new URL(rawUrl);
+    const sorted = Object.fromEntries(Object.entries(headers || {}).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+    const h = encodeURIComponent(JSON.stringify(sorted));
+    return `${PROXY_BASE}/mp${u.pathname}?${u.search.slice(1)}&headers=${h}&host=${encodeURIComponent(u.origin)}`;
+  } catch (e) {
+    return rawUrl;
+  }
+}
 function apiKey() { return kino.config.get("tmdbKey") || null; }
 
 // Kino 0.9.53+ answers TMDB with the person's own key (theirs in Ajustes, or their Stremio TMDB addon's).
@@ -400,24 +417,29 @@ async function vidlinkStreams(tmdbId, mediaType, season, episode) {
   if (!data) return [];
 
   const out = [];
+  // A `requiresProxy` link goes through vidlink's media proxy (direct fetch = 429); each stream carries
+  // the headers Kino must send (the proxy's Referer, or MovieBox's for a rare direct link).
+  const add = (url, quality, needsProxy, headers) => {
+    if (!url || !/^https?:/.test(url)) return;
+    if (needsProxy) out.push({ url: proxify(url, headers), quality, headers: PROXY_HEADERS });
+    else out.push({ url, quality, headers: STREAM_HEADERS });
+  };
 
-  // per-quality direct links
+  // per-quality links
   if (data.stream && data.stream.qualities) {
     for (const [qKey, val] of Object.entries(data.stream.qualities)) {
-      if (val && val.url && /^https?:/.test(val.url)) {
-        out.push({ url: val.url, quality: qKey });
-      }
+      if (val) add(val.url, qKey, !!val.requiresProxy, val.headers);
     }
   }
 
   // HLS master playlist fallback
-  if (!out.length && data.stream && data.stream.playlist && /^https?:/.test(data.stream.playlist)) {
-    out.push({ url: data.stream.playlist, quality: "auto" });
+  if (!out.length && data.stream && data.stream.playlist) {
+    add(data.stream.playlist, "auto", !!data.stream.requiresProxy, data.stream.headers);
   }
 
   // top-level url fallback
-  if (!out.length && data.url && /^https?:/.test(data.url)) {
-    out.push({ url: data.url, quality: data.quality || "auto" });
+  if (!out.length && data.url) {
+    add(data.url, data.quality || "auto", !!data.requiresProxy, data.headers);
   }
 
   return out.sort((a, b) => qualRank(b.quality) - qualRank(a.quality));
@@ -443,8 +465,8 @@ async function resolveRef(ref) {
   return {
     url:          best.url,
     label:        best.quality !== "auto" ? best.quality : undefined,
-    headers:      STREAM_HEADERS,
-    alternatives: rest.map(s => ({ url: s.url, label: s.quality, headers: STREAM_HEADERS })),
+    headers:      best.headers || STREAM_HEADERS,
+    alternatives: rest.map(s => ({ url: s.url, label: s.quality, headers: s.headers || STREAM_HEADERS })),
   };
 }
 

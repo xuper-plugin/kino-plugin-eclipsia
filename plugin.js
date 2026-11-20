@@ -659,6 +659,18 @@ var VL_HEADERS = {
   "Referer": "https://vidlink.pro/"
 };
 var STREAM_HEADERS = { "Referer": "https://moviebox.ph/" };
+var PROXY_BASE = "https://surge.flooderrr.store";
+var PROXY_HEADERS = { "Referer": "https://vidlink.pro/" };
+function proxify(rawUrl, headers) {
+  try {
+    const u = new URL(rawUrl);
+    const sorted = Object.fromEntries(Object.entries(headers || {}).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const h = encodeURIComponent(JSON.stringify(sorted));
+    return `${PROXY_BASE}/mp${u.pathname}?${u.search.slice(1)}&headers=${h}&host=${encodeURIComponent(u.origin)}`;
+  } catch (e) {
+    return rawUrl;
+  }
+}
 function apiKey() {
   return kino.config.get("tmdbKey") || null;
 }
@@ -1008,18 +1020,21 @@ async function vidlinkStreams(tmdbId, mediaType, season, episode) {
   const data = r.json();
   if (!data) return [];
   const out = [];
+  const add = (url2, quality, needsProxy, headers) => {
+    if (!url2 || !/^https?:/.test(url2)) return;
+    if (needsProxy) out.push({ url: proxify(url2, headers), quality, headers: PROXY_HEADERS });
+    else out.push({ url: url2, quality, headers: STREAM_HEADERS });
+  };
   if (data.stream && data.stream.qualities) {
     for (const [qKey, val] of Object.entries(data.stream.qualities)) {
-      if (val && val.url && /^https?:/.test(val.url)) {
-        out.push({ url: val.url, quality: qKey });
-      }
+      if (val) add(val.url, qKey, !!val.requiresProxy, val.headers);
     }
   }
-  if (!out.length && data.stream && data.stream.playlist && /^https?:/.test(data.stream.playlist)) {
-    out.push({ url: data.stream.playlist, quality: "auto" });
+  if (!out.length && data.stream && data.stream.playlist) {
+    add(data.stream.playlist, "auto", !!data.stream.requiresProxy, data.stream.headers);
   }
-  if (!out.length && data.url && /^https?:/.test(data.url)) {
-    out.push({ url: data.url, quality: data.quality || "auto" });
+  if (!out.length && data.url) {
+    add(data.url, data.quality || "auto", !!data.requiresProxy, data.headers);
   }
   return out.sort((a, b) => qualRank(b.quality) - qualRank(a.quality));
 }
@@ -1039,8 +1054,8 @@ async function resolveRef(ref) {
   return {
     url: best.url,
     label: best.quality !== "auto" ? best.quality : void 0,
-    headers: STREAM_HEADERS,
-    alternatives: rest.map((s) => ({ url: s.url, label: s.quality, headers: STREAM_HEADERS }))
+    headers: best.headers || STREAM_HEADERS,
+    alternatives: rest.map((s) => ({ url: s.url, label: s.quality, headers: s.headers || STREAM_HEADERS }))
   };
 }
 async function resolve(ref) {
